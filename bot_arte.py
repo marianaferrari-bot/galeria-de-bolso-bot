@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import random
 import requests
 from dotenv import load_dotenv
@@ -41,8 +42,9 @@ def send(chat_id, text):
 
 
 def send_photo(chat_id, url, legenda):
+    """Envia a foto. Devolve True se deu certo e False se o Telegram recusou."""
     botao = {"inline_keyboard": [[{"text": "🎲 Outra obra", "callback_data": "aleatoria"}]]}
-    requests.post(
+    r = requests.post(
         f"{BASE}/sendPhoto",
         data={
             "chat_id": chat_id,
@@ -50,8 +52,11 @@ def send_photo(chat_id, url, legenda):
             "caption": legenda[:1024],  # limite do Telegram
             "reply_markup": json.dumps(botao),
         },
-        timeout=20,
+        timeout=30,
     )
+    if not r.ok:
+        print("Telegram recusou a foto:", r.status_code, r.text)
+    return r.ok
 
 
 def answer_callback(callback_id):
@@ -110,8 +115,10 @@ def url_imagem(obra):
 def enviar_obra(chat_id, obra):
     if obra is None:
         send(chat_id, "Não encontrei nenhuma obra com imagem. Tente outro termo.")
-    else:
-        send_photo(chat_id, url_imagem(obra), formatar(obra))
+        return
+    ok = send_photo(chat_id, url_imagem(obra), formatar(obra))
+    if not ok:  # se a foto não carregar, manda pelo menos o texto com o link
+        send(chat_id, formatar(obra))
 
 
 def tratar_mensagem(chat_id, texto):
@@ -137,17 +144,31 @@ offset = None
 print("Bot de arte rodando... (Ctrl+C para parar)")
 while True:
     try:
-        for upd in get_updates(offset):
-            offset = upd["update_id"] + 1
+        updates = get_updates(offset)
+    except requests.RequestException as e:
+        print("Erro de rede ao falar com o Telegram:", e)
+        time.sleep(5)
+        continue
 
+    for upd in updates:
+        offset = upd["update_id"] + 1
+        chat_id = None
+        try:
             msg = upd.get("message")
             if msg and "text" in msg:
-                tratar_mensagem(msg["chat"]["id"], msg["text"])
+                chat_id = msg["chat"]["id"]
+                tratar_mensagem(chat_id, msg["text"])
 
             cb = upd.get("callback_query")  # clique no botão "Outra obra"
             if cb:
+                chat_id = cb["message"]["chat"]["id"]
                 answer_callback(cb["id"])
                 if cb.get("data") == "aleatoria":
-                    enviar_obra(cb["message"]["chat"]["id"], obra_aleatoria())
-    except requests.RequestException as e:
-        print("Erro de rede:", e)
+                    enviar_obra(chat_id, obra_aleatoria())
+        except Exception as e:
+            print("Erro ao tratar a mensagem:", repr(e))
+            if chat_id:
+                try:
+                    send(chat_id, "Ops, não consegui buscar a obra agora. Tente de novo em instantes.")
+                except Exception:
+                    pass
