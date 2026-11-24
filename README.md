@@ -33,13 +33,17 @@ título, artista, data e o link da página dela.
 | `/arte <termo>` | Busca obras por artista, tema ou estilo (ex.: `/arte monet`) |
 | Botão **Outra obra** | Aparece embaixo de cada imagem e envia outra obra aleatória |
 
-> A busca funciona melhor com palavras em inglês, como `/arte cat`.
+> A busca aceita português (ex.: `/arte gato`). O bot traduz o termo para o inglês antes de consultar o museu.
 
 ## 🔌 API utilizada
 
 **[Art Institute of Chicago API](https://api.artic.edu/docs/)**: pública e sem necessidade
 de chave. Usamos o endpoint de busca de obras (`/artworks/search`) e o servidor de imagens
 do próprio museu. Pedimos apenas obras de domínio público.
+
+Para permitir buscas em português, os termos são traduzidos para o inglês com um
+pequeno dicionário próprio e, quando a palavra não está nele, com a API gratuita
+[MyMemory](https://mymemory.translated.net/).
 
 ## 🚀 Como rodar
 
@@ -78,6 +82,7 @@ Principais funções do `bot_arte.py`:
 
 - `buscar`, `obra_aleatoria` e `obra_por_termo`: consultam a API do museu
 - `formatar` e `url_imagem`: montam o texto e o link da imagem
+- `traduzir`: converte o termo da busca de português para inglês
 - `tratar_mensagem`: decide o que fazer com cada comando
 - `send`, `send_photo` e `answer_callback`: enviam as respostas pelo Telegram
 

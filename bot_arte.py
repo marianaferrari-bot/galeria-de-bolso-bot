@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import html
 import random
 import requests
 from dotenv import load_dotenv
@@ -15,12 +16,41 @@ HEADERS = {"AIC-User-Agent": "bot-telegram-aula (projeto da disciplina)"}
 CAMPOS = "id,title,artist_display,date_display,image_id"
 
 AJUDA = (
-    "🎨 Bot de Arte - acervo do Instituto de Arte de Chicago\n\n"
-    "/aleatoria - uma obra surpresa\n"
-    "/arte <termo> - busca por tema, artista ou estilo\n"
-    "   ex.: /arte monet, /arte gato, /arte impressionismo\n"
-    "/ajuda - mostra esta mensagem"
+    "🎨 <b>Galeria de Bolso</b>\n"
+    "<i>Obras de arte do Art Institute of Chicago, direto no seu Telegram.</i>\n\n"
+    "<b>O que eu faço:</b>\n"
+    "🎲 /aleatoria - uma obra surpresa\n"
+    "🔎 /arte <code>termo</code> - busca por artista, tema ou estilo\n"
+    "❓ /ajuda - mostra esta mensagem\n\n"
+    "<b>Experimente:</b>\n"
+    "/arte monet\n"
+    "/arte gato\n"
+    "/arte paisagem\n\n"
+    "💡 Pode escrever em português, eu traduzo a busca para você!"
 )
+
+BOTAO_INICIO = {"inline_keyboard": [[{"text": "🎲 Surpreenda-me", "callback_data": "aleatoria"}]]}
+BOTAO_OUTRA = {"inline_keyboard": [[{"text": "🎲 Outra obra", "callback_data": "aleatoria"}]]}
+
+# Dicionário para as buscas mais comuns (o museu só entende inglês)
+DICIONARIO = {
+    "gato": "cat", "gatos": "cats", "cachorro": "dog", "cão": "dog", "cao": "dog",
+    "cavalo": "horse", "pássaro": "bird", "passaro": "bird", "peixe": "fish",
+    "leão": "lion", "leao": "lion", "elefante": "elephant", "borboleta": "butterfly",
+    "flor": "flower", "flores": "flowers", "árvore": "tree", "arvore": "tree",
+    "jardim": "garden", "paisagem": "landscape", "montanha": "mountain",
+    "mar": "sea", "rio": "river", "céu": "sky", "ceu": "sky", "sol": "sun",
+    "lua": "moon", "noite": "night", "barco": "boat", "navio": "ship",
+    "casa": "house", "ponte": "bridge", "cidade": "city", "guerra": "war",
+    "mulher": "woman", "homem": "man", "criança": "child", "crianca": "child",
+    "retrato": "portrait", "autorretrato": "self-portrait", "anjo": "angel",
+    "fruta": "fruit", "frutas": "fruit", "natureza morta": "still life",
+    "pintura": "painting", "escultura": "sculpture", "desenho": "drawing",
+    "impressionismo": "impressionism", "cubismo": "cubism",
+    "surrealismo": "surrealism", "renascimento": "renaissance",
+    "barroco": "baroque", "japão": "japan", "japao": "japan",
+    "egito": "egypt", "grécia": "greece", "grecia": "greece",
+}
 
 
 # ---------- Telegram ----------
@@ -33,24 +63,24 @@ def get_updates(offset):
     return r.json().get("result", [])
 
 
-def send(chat_id, text):
-    requests.post(
-        f"{BASE}/sendMessage",
-        data={"chat_id": chat_id, "text": text},
-        timeout=10,
-    )
+def send(chat_id, text, html_mode=False, botoes=None):
+    data = {"chat_id": chat_id, "text": text}
+    if html_mode:
+        data["parse_mode"] = "HTML"
+    if botoes:
+        data["reply_markup"] = json.dumps(botoes)
+    requests.post(f"{BASE}/sendMessage", data=data, timeout=10)
 
 
 def send_photo(chat_id, url, legenda):
     """Envia a foto. Devolve True se deu certo e False se o Telegram recusou."""
-    botao = {"inline_keyboard": [[{"text": "🎲 Outra obra", "callback_data": "aleatoria"}]]}
     r = requests.post(
         f"{BASE}/sendPhoto",
         data={
             "chat_id": chat_id,
             "photo": url,
             "caption": legenda[:1024],  # limite do Telegram
-            "reply_markup": json.dumps(botao),
+            "reply_markup": json.dumps(BOTAO_OUTRA),
         },
         timeout=30,
     )
@@ -65,6 +95,25 @@ def answer_callback(callback_id):
         data={"callback_query_id": callback_id},
         timeout=10,
     )
+
+
+# ---------- Tradução (português -> inglês) ----------
+def traduzir(termo):
+    t = termo.strip().lower()
+    if t in DICIONARIO:
+        return DICIONARIO[t]
+    try:  # se não estiver no dicionário, tenta a API gratuita MyMemory
+        r = requests.get(
+            "https://api.mymemory.translated.net/get",
+            params={"q": termo, "langpair": "pt|en"},
+            timeout=8,
+        )
+        texto = html.unescape(r.json()["responseData"]["translatedText"]).strip()
+        if texto and "MYMEMORY" not in texto.upper():
+            return texto
+    except Exception as e:
+        print("Não consegui traduzir, usando o termo original:", repr(e))
+    return termo
 
 
 # ---------- API externa (Art Institute of Chicago) ----------
@@ -112,31 +161,43 @@ def url_imagem(obra):
 
 
 # ---------- Lógica dos comandos ----------
-def enviar_obra(chat_id, obra):
+def enviar_obra(chat_id, obra, prefixo=""):
     if obra is None:
         send(chat_id, "Não encontrei nenhuma obra com imagem. Tente outro termo.")
         return
-    ok = send_photo(chat_id, url_imagem(obra), formatar(obra))
-    if not ok:  # se a foto não carregar, manda pelo menos o texto com o link
-        send(chat_id, formatar(obra))
+    legenda = (prefixo + "\n\n" if prefixo else "") + formatar(obra)
+    if not send_photo(chat_id, url_imagem(obra), legenda):
+        send(chat_id, legenda)  # se a foto não carregar, manda pelo menos o texto
+
+
+def buscar_e_enviar(chat_id, termo):
+    termo_en = traduzir(termo)
+    obra = obra_por_termo(termo_en)
+    if obra is None:
+        send(chat_id, f'Não encontrei obras para "{termo}". Tente outro termo.')
+        return
+    prefixo = f"🔎 Busca: {termo}"
+    if termo_en.lower() != termo.lower():
+        prefixo += f" → {termo_en}"
+    enviar_obra(chat_id, obra, prefixo)
 
 
 def tratar_mensagem(chat_id, texto):
     partes = texto.strip().split(maxsplit=1)
-    comando = partes[0].lower()
+    comando = partes[0].lower().split("@")[0]  # aceita /arte@nome_do_bot em grupos
     arg = partes[1] if len(partes) > 1 else ""
 
     if comando in ("/start", "/ajuda"):
-        send(chat_id, AJUDA)
+        send(chat_id, AJUDA, html_mode=True, botoes=BOTAO_INICIO)
     elif comando == "/aleatoria":
         enviar_obra(chat_id, obra_aleatoria())
     elif comando == "/arte":
         if not arg:
-            send(chat_id, "Informe um termo. Ex.: /arte monet")
+            send(chat_id, "Diga o que você quer ver. Ex.: /arte gato")
         else:
-            enviar_obra(chat_id, obra_por_termo(arg))
+            buscar_e_enviar(chat_id, arg)
     else:
-        send(chat_id, "Comando não reconhecido. Use /ajuda.")
+        send(chat_id, "Não conheço esse comando. Use /ajuda para ver as opções.")
 
 
 # ---------- Loop principal ----------
@@ -159,7 +220,7 @@ while True:
                 chat_id = msg["chat"]["id"]
                 tratar_mensagem(chat_id, msg["text"])
 
-            cb = upd.get("callback_query")  # clique no botão "Outra obra"
+            cb = upd.get("callback_query")  # clique nos botões de "outra obra"
             if cb:
                 chat_id = cb["message"]["chat"]["id"]
                 answer_callback(cb["id"])
