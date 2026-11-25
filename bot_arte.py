@@ -60,7 +60,12 @@ def get_updates(offset):
         params={"offset": offset, "timeout": 30},
         timeout=40,
     )
-    return r.json().get("result", [])
+    dados = r.json()
+    if not dados.get("ok"):  # ex.: 409 = existe outra cópia do bot rodando
+        print("Telegram retornou erro:", dados)
+        time.sleep(3)
+        return []
+    return dados.get("result", [])
 
 
 def send(chat_id, text, html_mode=False, botoes=None):
@@ -132,12 +137,18 @@ def buscar(termo=None, pagina=1, limite=1):
 
 
 def obra_aleatoria():
-    total = buscar()["pagination"]["total"]
-    for _ in range(5):  # algumas obras não têm imagem, então tenta de novo
-        pagina = random.randint(1, min(total, 5000))
-        dados = buscar(pagina=pagina)["data"]
-        if dados and dados[0].get("image_id"):
-            return dados[0]
+    # A API recusa páginas muito fundas (erro 403), então sorteamos só entre
+    # as primeiras 900 obras: 9 páginas de 100.
+    for _ in range(3):
+        pagina = random.randint(1, 9)
+        try:
+            dados = buscar(pagina=pagina, limite=100)["data"]
+        except requests.HTTPError as e:
+            print("Busca recusada pela API do museu:", e)
+            continue
+        obras = [o for o in dados if o.get("image_id")]  # algumas não têm imagem
+        if obras:
+            return random.choice(obras)
     return None
 
 
@@ -214,6 +225,7 @@ while True:
     for upd in updates:
         offset = upd["update_id"] + 1
         chat_id = None
+        print("Recebido:", "clique no botão" if "callback_query" in upd else "mensagem")
         try:
             msg = upd.get("message")
             if msg and "text" in msg:
